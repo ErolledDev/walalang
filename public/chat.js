@@ -366,8 +366,8 @@
       // User info form submission
       const userInfoForm = document.getElementById('business-chat-submit-info');
       userInfoForm.addEventListener('click', async () => {
-        const nameInput = document.getElementById('business-chat-name') as HTMLInputElement;
-        const emailInput = document.getElementById('business-chat-email') as HTMLInputElement;
+        const nameInput = document.getElementById('business-chat-name');
+        const emailInput = document.getElementById('business-chat-email');
         
         const name = nameInput.value.trim();
         const email = emailInput.value.trim();
@@ -434,8 +434,8 @@
       });
       
       // Add input field event listeners
-      const nameInput = document.getElementById('business-chat-name') as HTMLInputElement;
-      const emailInput = document.getElementById('business-chat-email') as HTMLInputElement;
+      const nameInput = document.getElementById('business-chat-name');
+      const emailInput = document.getElementById('business-chat-email');
       
       nameInput.addEventListener('input', function() {
         this.style.borderColor = this.value.trim() ? '#d1d5db' : '#ef4444';
@@ -446,7 +446,7 @@
       });
       
       // Chat input event listeners
-      const chatInput = document.getElementById('business-chat-input') as HTMLInputElement;
+      const chatInput = document.getElementById('business-chat-input');
       const chatSend = document.getElementById('business-chat-send');
       
       const self = this; // Store reference to 'this' for use in event handlers
