@@ -390,11 +390,22 @@
         // Get IP address if possible
         let ipAddress = '';
         try {
-          const ipResponse = await fetch('https://api.ipify.org?format=json');
-          const ipData = await ipResponse.json();
-          ipAddress = ipData.ip;
+          // Use a CORS-friendly IP API
+          const ipResponse = await fetch('https://api.ipify.org?format=json', {
+            method: 'GET',
+            mode: 'cors',
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (ipResponse.ok) {
+            const ipData = await ipResponse.json();
+            ipAddress = ipData.ip;
+          }
         } catch (error) {
           console.error('Failed to get IP address:', error);
+          // Continue without IP address
         }
         
         // Save analytics data
@@ -404,7 +415,8 @@
             headers: {
               'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60',
               'Content-Type': 'application/json',
-              'Prefer': 'return=representation'
+              'Prefer': 'return=representation',
+              'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60'
             },
             body: JSON.stringify({
               user_id: this.uid,
@@ -414,9 +426,14 @@
             })
           });
           
-          const analyticsData = await analyticsResponse.json();
-          if (analyticsData && analyticsData.length > 0) {
-            this.analyticsId = analyticsData[0].id;
+          if (analyticsResponse.ok) {
+            const analyticsData = await analyticsResponse.json();
+            if (analyticsData && analyticsData.length > 0) {
+              this.analyticsId = analyticsData[0].id;
+              console.log('Analytics saved successfully with ID:', this.analyticsId);
+            }
+          } else {
+            console.error('Failed to save analytics data:', await analyticsResponse.text());
           }
         } catch (error) {
           console.error('Failed to save analytics data:', error);
@@ -1113,14 +1130,18 @@
     }
     
     async saveChatMessage(message, sender) {
-      if (!this.analyticsId) return;
+      if (!this.analyticsId) {
+        console.log('No analytics ID available, cannot save chat message');
+        return;
+      }
       
       try {
-        await fetch('https://usyavvmfddorgmitctym.supabase.co/rest/v1/chat_messages', {
+        const response = await fetch('https://usyavvmfddorgmitctym.supabase.co/rest/v1/chat_messages', {
           method: 'POST',
           headers: {
             'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60',
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60'
           },
           body: JSON.stringify({
             analytics_id: this.analyticsId,
@@ -1128,6 +1149,12 @@
             sender: sender
           })
         });
+        
+        if (!response.ok) {
+          throw new Error(`Failed to save chat message: ${response.status} ${response.statusText}`);
+        }
+        
+        console.log('Chat message saved successfully');
       } catch (error) {
         console.error('Failed to save chat message:', error);
       }
