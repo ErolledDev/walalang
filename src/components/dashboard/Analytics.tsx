@@ -1,395 +1,282 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
+import { BarChart, ClipboardList, Clock, Calendar, MessageCircle, User, ArrowRight, Download, Filter } from 'lucide-react';
+import { getAnalyticsData, ChatSession } from '../../lib/analyticsService';
 import { useAuth } from '../../contexts/AuthContext';
-import { BarChart, Search, Calendar, Mail, User, Clock, MessageSquare, ChevronDown, ChevronUp, Download, RefreshCw } from 'lucide-react';
-import { useNotification } from '../../contexts/NotificationContext';
-import * as XLSX from 'xlsx';
-
-interface ChatAnalytics {
-  id: string;
-  visitor_name: string;
-  visitor_email: string;
-  ip_address: string;
-  timestamp: string;
-}
-
-interface ChatMessage {
-  id: string;
-  analytics_id: string;
-  message: string;
-  sender: string;
-  timestamp: string;
-}
+import { format } from 'date-fns';
 
 const Analytics: React.FC = () => {
   const { user } = useAuth();
-  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
-  const [analytics, setAnalytics] = useState<ChatAnalytics[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [expandedChat, setExpandedChat] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<Record<string, ChatMessage[]>>({});
-  const [dateRange, setDateRange] = useState({
-    from: '',
-    to: ''
+  const [analytics, setAnalytics] = useState<{
+    totalSessions: number;
+    totalMessages: number;
+    averageMessagesPerSession: number;
+    sessions: ChatSession[];
+  }>({
+    totalSessions: 0,
+    totalMessages: 0,
+    averageMessagesPerSession: 0,
+    sessions: []
   });
+  const [selectedSession, setSelectedSession] = useState<ChatSession | null>(null);
+  const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    if (user) {
-      fetchAnalytics();
-    }
+    const fetchAnalytics = async () => {
+      try {
+        setLoading(true);
+        const data = await getAnalyticsData();
+        setAnalytics(data);
+      } catch (error) {
+        console.error('Error fetching analytics:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAnalytics();
   }, [user]);
 
-  const fetchAnalytics = async () => {
+  const filteredSessions = analytics.sessions.filter(session => {
+    if (!filter) return true;
+    
+    const lowerFilter = filter.toLowerCase();
+    const visitorInfo = session.visitorInfo;
+    
+    return (
+      (visitorInfo.name && visitorInfo.name.toLowerCase().includes(lowerFilter)) ||
+      (visitorInfo.email && visitorInfo.email.toLowerCase().includes(lowerFilter)) ||
+      (visitorInfo.ipAddress && visitorInfo.ipAddress.toLowerCase().includes(lowerFilter)) ||
+      session.messages.some(msg => msg.content.toLowerCase().includes(lowerFilter))
+    );
+  });
+
+  const handleExportData = () => {
     try {
-      setLoading(true);
+      const dataStr = JSON.stringify(analytics.sessions, null, 2);
+      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
       
-      let query = supabase
-        .from('chat_analytics')
-        .select('*')
-        .eq('user_id', user?.id)
-        .order('timestamp', { ascending: false });
+      const exportFileDefaultName = `widget-chat-analytics-${new Date().toISOString().split('T')[0]}.json`;
       
-      // Apply date filters if set
-      if (dateRange.from) {
-        query = query.gte('timestamp', dateRange.from);
-      }
-      if (dateRange.to) {
-        // Add one day to include the end date fully
-        const endDate = new Date(dateRange.to);
-        endDate.setDate(endDate.getDate() + 1);
-        query = query.lt('timestamp', endDate.toISOString());
-      }
-      
-      const { data, error } = await query;
-
-      if (error) throw error;
-      setAnalytics(data || []);
+      const linkElement = document.createElement('a');
+      linkElement.setAttribute('href', dataUri);
+      linkElement.setAttribute('download', exportFileDefaultName);
+      linkElement.click();
     } catch (error) {
-      console.error('Error fetching analytics:', error);
-      showNotification({
-        type: 'error',
-        title: 'Error',
-        message: 'Failed to load analytics data. Please try again.'
-      });
-    } finally {
-      setLoading(false);
+      console.error('Error exporting data:', error);
     }
-  };
-
-  const fetchChatMessages = async (analyticsId: string) => {
-    try {
-      // Check if we already have the messages
-      if (chatMessages[analyticsId]) {
-        return;
-      }
-      
-      const { data, error } = await supabase
-        .from('chat_messages')
-        .select('*')
-        .eq('analytics_id', analyticsId)
-        .order('timestamp', { ascending: true });
-
-      if (error) throw error;
-      
-      setChatMessages(prev => ({
-        ...prev,
-        [analyticsId]: data || []
-      }));
-    } catch (error) {
-      console.error('Error fetching chat messages:', error);
-      showNotification({
-        type: 'error',
-        title: 'Error',
-        message: 'Failed to load chat messages. Please try again.'
-      });
-    }
-  };
-
-  const toggleChatExpansion = async (analyticsId: string) => {
-    if (expandedChat === analyticsId) {
-      setExpandedChat(null);
-    } else {
-      setExpandedChat(analyticsId);
-      await fetchChatMessages(analyticsId);
-    }
-  };
-
-  const handleDateRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setDateRange(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-
-  const applyFilters = () => {
-    fetchAnalytics();
-  };
-
-  const resetFilters = () => {
-    setDateRange({
-      from: '',
-      to: ''
-    });
-    setSearchTerm('');
-    fetchAnalytics();
-  };
-
-  const exportToExcel = () => {
-    if (analytics.length === 0) {
-      showNotification({
-        type: 'error',
-        title: 'Export Failed',
-        message: 'No data to export'
-      });
-      return;
-    }
-    
-    // Prepare data for export
-    const exportData = analytics.map(item => ({
-      'Visitor Name': item.visitor_name,
-      'Visitor Email': item.visitor_email,
-      'IP Address': item.ip_address,
-      'Timestamp': new Date(item.timestamp).toLocaleString(),
-    }));
-    
-    // Create worksheet
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    
-    // Create workbook
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Chat Analytics');
-    
-    // Generate Excel file
-    XLSX.writeFile(workbook, 'chat_analytics_export.xlsx');
-    
-    showNotification({
-      type: 'success',
-      title: 'Export Successful',
-      message: 'Analytics data exported to Excel file'
-    });
-  };
-
-  const filteredAnalytics = analytics.filter(item => 
-    item.visitor_name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    item.visitor_email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.ip_address.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString();
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-        <span className="ml-3 text-gray-600">Loading analytics data...</span>
+        <span className="ml-3 text-gray-600">Loading analytics...</span>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
+    <div className="max-w-4xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
         <div className="flex items-center">
           <BarChart className="h-6 w-6 text-indigo-600 mr-2" />
-          <h2 className="text-xl font-semibold text-gray-900">Chat Analytics</h2>
+          <h2 className="text-xl font-semibold text-gray-900">Analytics</h2>
         </div>
-        <button
-          onClick={fetchAnalytics}
-          className="text-gray-600 hover:text-gray-900 flex items-center transition-colors"
-          title="Refresh analytics"
+        <button 
+          onClick={handleExportData}
+          className="btn-secondary"
         >
-          <RefreshCw className="h-4 w-4 mr-1" />
-          Refresh
+          <Download className="h-4 w-4 mr-2" />
+          Export Data
         </button>
       </div>
-
-      {/* Filters */}
-      <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 mb-6">
-        <h3 className="text-lg font-medium mb-4 text-gray-900">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div>
-            <label className="form-label flex items-center">
-              <Calendar className="h-4 w-4 mr-2 text-gray-500" />
-              From Date
-            </label>
-            <input
-              type="date"
-              name="from"
-              value={dateRange.from}
-              onChange={handleDateRangeChange}
-              className="form-input"
-            />
-          </div>
-          <div>
-            <label className="form-label flex items-center">
-              <Calendar className="h-4 w-4 mr-2 text-gray-500" />
-              To Date
-            </label>
-            <input
-              type="date"
-              name="to"
-              value={dateRange.to}
-              onChange={handleDateRangeChange}
-              className="form-input"
-            />
-          </div>
-          <div>
-            <label className="form-label flex items-center">
-              <Search className="h-4 w-4 mr-2 text-gray-500" />
-              Search
-            </label>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="form-input"
-              placeholder="Search by name, email or IP..."
-            />
+      
+      {analytics.totalSessions === 0 ? (
+        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 text-center">
+          <div className="flex flex-col items-center justify-center py-12">
+            <div className="bg-indigo-100 p-4 rounded-full mb-6">
+              <ClipboardList className="h-12 w-12 text-indigo-600" />
+            </div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-3">No Chat Data Yet</h3>
+            <p className="text-gray-600 max-w-lg mx-auto mb-6">
+              Once visitors start using your chat widget, you'll see analytics data here.
+              All conversations are stored locally in the browser.
+            </p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={applyFilters}
-            className="btn-primary"
-          >
-            Apply Filters
-          </button>
-          <button
-            onClick={resetFilters}
-            className="btn-secondary"
-          >
-            Reset Filters
-          </button>
-          <button
-            onClick={exportToExcel}
-            className="btn-secondary ml-auto"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export to Excel
-          </button>
-        </div>
-      </div>
-
-      {/* Analytics Table */}
-      <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200">
-        <h3 className="text-lg font-medium mb-4 text-gray-900">Chat Sessions</h3>
-        
-        {filteredAnalytics.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50 rounded-lg">
-            <BarChart className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500 text-lg">No analytics data found</p>
-            {searchTerm || dateRange.from || dateRange.to ? (
-              <p className="text-gray-400 mt-2">Try different search terms or date range</p>
-            ) : (
-              <p className="text-gray-400 mt-2">Analytics data will appear here once visitors use your chat widget</p>
-            )}
+      ) : (
+        <>
+          {/* Analytics Overview */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+              <div className="flex items-center mb-2">
+                <MessageCircle className="h-5 w-5 text-indigo-600 mr-2" />
+                <h3 className="text-lg font-medium text-gray-900">Total Conversations</h3>
+              </div>
+              <p className="text-3xl font-bold text-gray-900">{analytics.totalSessions}</p>
+            </div>
+            
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+              <div className="flex items-center mb-2">
+                <ClipboardList className="h-5 w-5 text-indigo-600 mr-2" />
+                <h3 className="text-lg font-medium text-gray-900">Total Messages</h3>
+              </div>
+              <p className="text-3xl font-bold text-gray-900">{analytics.totalMessages}</p>
+            </div>
+            
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+              <div className="flex items-center mb-2">
+                <BarChart className="h-5 w-5 text-indigo-600 mr-2" />
+                <h3 className="text-lg font-medium text-gray-900">Avg. Messages</h3>
+              </div>
+              <p className="text-3xl font-bold text-gray-900">
+                {analytics.averageMessagesPerSession.toFixed(1)}
+              </p>
+            </div>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Visitor
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Email
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    IP Address
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Timestamp
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Chat
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredAnalytics.map((item) => (
-                  <React.Fragment key={item.id}>
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <User className="h-5 w-5 text-gray-400 mr-2" />
-                          <div className="text-sm font-medium text-gray-900">{item.visitor_name}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <Mail className="h-5 w-5 text-gray-400 mr-2" />
-                          <div className="text-sm text-gray-500">{item.visitor_email}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-500">{item.ip_address || 'Not available'}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <Clock className="h-5 w-5 text-gray-400 mr-2" />
-                          <div className="text-sm text-gray-500">{formatDate(item.timestamp)}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <button
-                          onClick={() => toggleChatExpansion(item.id)}
-                          className="flex items-center text-indigo-600 hover:text-indigo-900"
-                        >
-                          <MessageSquare className="h-5 w-5 mr-1" />
-                          <span>View Chat</span>
-                          {expandedChat === item.id ? (
-                            <ChevronUp className="h-4 w-4 ml-1" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4 ml-1" />
-                          )}
-                        </button>
-                      </td>
-                    </tr>
-                    {expandedChat === item.id && (
-                      <tr>
-                        <td colSpan={5} className="px-6 py-4 bg-gray-50">
-                          <div className="rounded-lg border border-gray-200 p-4 max-h-96 overflow-y-auto">
-                            <h4 className="font-medium text-gray-900 mb-3">Chat History</h4>
-                            {chatMessages[item.id]?.length > 0 ? (
-                              <div className="space-y-3">
-                                {chatMessages[item.id].map((message) => (
-                                  <div 
-                                    key={message.id} 
-                                    className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                                  >
-                                    <div 
-                                      className={`max-w-xs rounded-lg px-4 py-2 ${
-                                        message.sender === 'user' 
-                                          ? 'bg-indigo-100 text-indigo-800' 
-                                          : 'bg-gray-100 text-gray-800'
-                                      }`}
-                                    >
-                                      <p className="text-sm">{message.message}</p>
-                                      <p className="text-xs text-gray-500 mt-1">{formatDate(message.timestamp)}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-gray-500 text-center py-4">No chat messages found</p>
-                            )}
+          
+          {/* Chat Sessions List and Detail View */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Sessions List */}
+            <div className="lg:col-span-1">
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium text-gray-900">Conversations</h3>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={filter}
+                      onChange={(e) => setFilter(e.target.value)}
+                      placeholder="Search..."
+                      className="pl-8 pr-4 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                    <Filter className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  </div>
+                </div>
+                
+                <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                  {filteredSessions.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      No conversations match your search
+                    </div>
+                  ) : (
+                    filteredSessions.map((session) => (
+                      <div 
+                        key={session.id}
+                        className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedSession?.id === session.id 
+                            ? 'bg-indigo-50 border-indigo-200' 
+                            : 'bg-white border-gray-200 hover:bg-gray-50'
+                        }`}
+                        onClick={() => setSelectedSession(session)}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start">
+                            <div className="bg-gray-100 rounded-full p-2 mr-3">
+                              <User className="h-4 w-4 text-gray-600" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900">
+                                {session.visitorInfo.name || 'Anonymous Visitor'}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {session.visitorInfo.email || session.visitorInfo.ipAddress || 'No contact info'}
+                              </p>
+                            </div>
                           </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
+                          <div className="text-xs text-gray-500">
+                            {format(new Date(session.timestamp), 'MMM d, yyyy')}
+                          </div>
+                        </div>
+                        <div className="mt-2 flex justify-between items-center">
+                          <span className="text-xs text-gray-500">
+                            {session.messages.length} messages
+                          </span>
+                          <ArrowRight className="h-3 w-3 text-gray-400" />
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            {/* Chat Detail View */}
+            <div className="lg:col-span-2">
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 h-full">
+                {selectedSession ? (
+                  <>
+                    <div className="border-b border-gray-200 pb-4 mb-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <div className="bg-indigo-100 rounded-full p-2 mr-3">
+                            <User className="h-5 w-5 text-indigo-600" />
+                          </div>
+                          <div>
+                            <h3 className="font-medium text-gray-900">
+                              {selectedSession.visitorInfo.name || 'Anonymous Visitor'}
+                            </h3>
+                            <p className="text-xs text-gray-500">
+                              {selectedSession.visitorInfo.email || 'No email provided'}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-sm text-gray-500 flex items-center">
+                          <Calendar className="h-4 w-4 mr-1" />
+                          {format(new Date(selectedSession.timestamp), 'MMM d, yyyy h:mm a')}
+                        </div>
+                      </div>
+                      
+                      {selectedSession.visitorInfo.ipAddress && (
+                        <div className="mt-3 text-xs text-gray-500">
+                          IP: {selectedSession.visitorInfo.ipAddress}
+                        </div>
+                      )}
+                      
+                      {selectedSession.visitorInfo.referrer && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          Referrer: {selectedSession.visitorInfo.referrer}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto p-2">
+                      {selectedSession.messages.map((message) => (
+                        <div 
+                          key={message.id}
+                          className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                        >
+                          <div 
+                            className={`max-w-[80%] p-3 rounded-lg ${
+                              message.sender === 'user' 
+                                ? 'bg-indigo-100 text-indigo-900' 
+                                : 'bg-gray-100 text-gray-800'
+                            }`}
+                          >
+                            <p className="text-sm">{message.content}</p>
+                            <p className="text-xs text-right mt-1 opacity-70">
+                              {format(new Date(message.timestamp), 'h:mm a')}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full py-12 text-center">
+                    <MessageCircle className="h-12 w-12 text-gray-300 mb-4" />
+                    <h3 className="text-lg font-medium text-gray-500 mb-2">No Conversation Selected</h3>
+                    <p className="text-gray-400 max-w-md">
+                      Select a conversation from the list to view the details
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 };

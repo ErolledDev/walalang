@@ -26,7 +26,7 @@ export async function getAutoReplies(uid: string) {
       .eq('user_id', uid);
       
     if (error) throw error;
-    return data;
+    return data || [];
   } catch (error) {
     console.error('Error fetching auto replies:', error);
     throw error;

@@ -11,12 +11,7 @@
       this.aiSettings = null;
       this.isTyping = false;
       this.unreadCount = 1;
-      this.analyticsId = null;
-      this.userInfo = {
-        name: '',
-        email: ''
-      };
-      this.userInfoSubmitted = false;
+      this.sessionId = null;
       
       // Initialize the chat widget
       this.init();
@@ -31,6 +26,9 @@
         
         // Create widget UI
         this.createWidgetUI();
+        
+        // Initialize analytics
+        this.initializeAnalytics();
         
         this.initialized = true;
       } catch (error) {
@@ -90,6 +88,115 @@
         this.aiSettings = aiSettingsData[0] || null;
       } catch (error) {
         console.error('Failed to load widget data:', error);
+      }
+    }
+    
+    initializeAnalytics() {
+      // Generate a unique session ID if not already set
+      if (!this.sessionId) {
+        this.sessionId = Date.now().toString(36) + Math.random().toString(36).substring(2);
+      }
+      
+      // Get existing sessions from localStorage or initialize empty array
+      let sessions = [];
+      try {
+        const storedSessions = localStorage.getItem(`widget_chat_sessions_${this.uid}`);
+        if (storedSessions) {
+          sessions = JSON.parse(storedSessions);
+        }
+      } catch (error) {
+        console.error('Error reading sessions from localStorage:', error);
+      }
+      
+      // Create a new session
+      const newSession = {
+        id: this.sessionId,
+        timestamp: new Date().toISOString(),
+        visitorInfo: {
+          userAgent: navigator.userAgent,
+          referrer: document.referrer
+        },
+        messages: []
+      };
+      
+      // Add the new session to the array
+      sessions.push(newSession);
+      
+      // Save back to localStorage
+      try {
+        localStorage.setItem(`widget_chat_sessions_${this.uid}`, JSON.stringify(sessions));
+      } catch (error) {
+        console.error('Error saving session to localStorage:', error);
+      }
+      
+      // Try to get IP address (this may be blocked by browsers)
+      this.getIpAddress().then(ip => {
+        if (ip) {
+          this.updateSessionInfo({ ipAddress: ip });
+        }
+      });
+    }
+    
+    async getIpAddress() {
+      try {
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        return data.ip;
+      } catch (error) {
+        console.error('Failed to get IP address:', error);
+        return null;
+      }
+    }
+    
+    updateSessionInfo(info) {
+      try {
+        // Get current sessions
+        const storedSessions = localStorage.getItem(`widget_chat_sessions_${this.uid}`);
+        if (!storedSessions) return;
+        
+        const sessions = JSON.parse(storedSessions);
+        
+        // Find current session
+        const sessionIndex = sessions.findIndex(s => s.id === this.sessionId);
+        if (sessionIndex === -1) return;
+        
+        // Update visitor info
+        sessions[sessionIndex].visitorInfo = {
+          ...sessions[sessionIndex].visitorInfo,
+          ...info
+        };
+        
+        // Save back to localStorage
+        localStorage.setItem(`widget_chat_sessions_${this.uid}`, JSON.stringify(sessions));
+      } catch (error) {
+        console.error('Error updating session info:', error);
+      }
+    }
+    
+    saveMessageToAnalytics(message, sender) {
+      try {
+        // Get current sessions
+        const storedSessions = localStorage.getItem(`widget_chat_sessions_${this.uid}`);
+        if (!storedSessions) return;
+        
+        const sessions = JSON.parse(storedSessions);
+        
+        // Find current session
+        const sessionIndex = sessions.findIndex(s => s.id === this.sessionId);
+        if (sessionIndex === -1) return;
+        
+        // Add message
+        sessions[sessionIndex].messages.push({
+          id: Date.now().toString(36) + Math.random().toString(36).substring(2),
+          content: message,
+          sender: sender,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Save back to localStorage
+        localStorage.setItem(`widget_chat_sessions_${this.uid}`, JSON.stringify(sessions));
+      } catch (error) {
+        console.error('Error saving message to analytics:', error);
       }
     }
     
@@ -218,54 +325,7 @@
       `;
       chatWindow.appendChild(chatHeader);
       
-      // Create user info form container
-      const userInfoContainer = document.createElement('div');
-      userInfoContainer.id = 'business-chat-user-info';
-      userInfoContainer.style.flex = '1';
-      userInfoContainer.style.padding = '20px';
-      userInfoContainer.style.backgroundColor = '#f9fafb';
-      userInfoContainer.style.overflowY = 'auto';
-      userInfoContainer.style.display = 'flex';
-      userInfoContainer.style.flexDirection = 'column';
-      userInfoContainer.style.justifyContent = 'center';
-      userInfoContainer.style.alignItems = 'center';
-      
-      userInfoContainer.innerHTML = `
-        <div style="max-width: 320px; width: 100%; background-color: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #e5e7eb;">
-          <h3 style="font-size: 18px; font-weight: 600; color: #111827; margin-bottom: 16px; text-align: center;">Before we start chatting</h3>
-          <p style="font-size: 14px; color: #4b5563; margin-bottom: 20px; text-align: center;">Please provide your information so we can better assist you.</p>
-          
-          <div style="margin-bottom: 16px;">
-            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 6px;">Your Name</label>
-            <input 
-              id="business-chat-name" 
-              type="text" 
-              placeholder="Enter your name" 
-              style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; outline: none; transition: border-color 0.2s ease;"
-            >
-          </div>
-          
-          <div style="margin-bottom: 24px;">
-            <label style="display: block; font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 6px;">Your Email</label>
-            <input 
-              id="business-chat-email" 
-              type="email" 
-              placeholder="Enter your email" 
-              style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; outline: none; transition: border-color 0.2s ease;"
-            >
-          </div>
-          
-          <button 
-            id="business-chat-submit-info" 
-            style="width: 100%; padding: 12px; background-color: ${this.settings?.brand_color || '#3B82F6'}; color: white; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: background-color 0.2s ease;"
-          >
-            Start Chatting
-          </button>
-        </div>
-      `;
-      chatWindow.appendChild(userInfoContainer);
-      
-      // Create chat messages container (initially hidden)
+      // Create chat messages container
       const chatMessages = document.createElement('div');
       chatMessages.id = 'business-chat-messages';
       chatMessages.style.flex = '1';
@@ -273,7 +333,7 @@
       chatMessages.style.overflowY = 'auto';
       chatMessages.style.backgroundColor = '#f9fafb';
       chatMessages.style.backgroundImage = 'none';
-      chatMessages.style.display = 'none';
+      chatMessages.style.display = 'block';
       chatWindow.appendChild(chatMessages);
       
       // Add welcome message
@@ -286,6 +346,9 @@
         <div class="business-chat-message-time">${this.formatTime(new Date())}</div>
       `;
       chatMessages.appendChild(welcomeMessage);
+      
+      // Save welcome message to analytics
+      this.saveMessageToAnalytics(this.settings?.business_description || 'How can we help you today?', 'bot');
       
       // Create advanced replies container (initially hidden)
       const advancedRepliesContainer = document.createElement('div');
@@ -313,13 +376,13 @@
       `;
       chatMessages.appendChild(typingIndicator);
       
-      // Create chat input area (initially hidden)
+      // Create chat input area
       const chatInputArea = document.createElement('div');
       chatInputArea.id = 'business-chat-input-area';
       chatInputArea.style.padding = '16px 20px';
       chatInputArea.style.borderTop = '1px solid #eaeaea';
       chatInputArea.style.backgroundColor = 'white';
-      chatInputArea.style.display = 'none';
+      chatInputArea.style.display = 'block';
       chatInputArea.innerHTML = `
         <div style="display: flex; align-items: center;">
           <input id="business-chat-input" type="text" placeholder="Type your message..." style="flex: 1; padding: 14px 18px; border: 1px solid #e0e0e0; border-radius: 24px; outline: none; font-size: 14px; transition: all 0.2s ease; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -363,105 +426,6 @@
         this.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
       });
       
-      // User info form submission
-      const userInfoForm = document.getElementById('business-chat-submit-info');
-      userInfoForm.addEventListener('click', async () => {
-        const nameInput = document.getElementById('business-chat-name');
-        const emailInput = document.getElementById('business-chat-email');
-        
-        const name = nameInput.value.trim();
-        const email = emailInput.value.trim();
-        
-        if (!name) {
-          nameInput.style.borderColor = '#ef4444';
-          return;
-        }
-        
-        if (!email || !this.validateEmail(email)) {
-          emailInput.style.borderColor = '#ef4444';
-          return;
-        }
-        
-        // Store user info
-        this.userInfo.name = name;
-        this.userInfo.email = email;
-        this.userInfoSubmitted = true;
-        
-        // Get IP address if possible
-        let ipAddress = '';
-        try {
-          // Use a CORS-friendly IP API
-          const ipResponse = await fetch('https://api.ipify.org?format=json', {
-            method: 'GET',
-            mode: 'cors',
-            headers: {
-              'Accept': 'application/json'
-            }
-          });
-          
-          if (ipResponse.ok) {
-            const ipData = await ipResponse.json();
-            ipAddress = ipData.ip;
-          }
-        } catch (error) {
-          console.error('Failed to get IP address:', error);
-          // Continue without IP address
-        }
-        
-        // Save analytics data
-        try {
-          const analyticsResponse = await fetch('https://usyavvmfddorgmitctym.supabase.co/rest/v1/chat_analytics', {
-            method: 'POST',
-            headers: {
-              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60',
-              'Content-Type': 'application/json',
-              'Prefer': 'return=representation',
-              'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60'
-            },
-            body: JSON.stringify({
-              user_id: this.uid,
-              visitor_name: name,
-              visitor_email: email,
-              ip_address: ipAddress
-            })
-          });
-          
-          if (analyticsResponse.ok) {
-            const analyticsData = await analyticsResponse.json();
-            if (analyticsData && analyticsData.length > 0) {
-              this.analyticsId = analyticsData[0].id;
-              console.log('Analytics saved successfully with ID:', this.analyticsId);
-            }
-          } else {
-            console.error('Failed to save analytics data:', await analyticsResponse.text());
-          }
-        } catch (error) {
-          console.error('Failed to save analytics data:', error);
-        }
-        
-        // Show chat interface
-        document.getElementById('business-chat-user-info').style.display = 'none';
-        document.getElementById('business-chat-messages').style.display = 'block';
-        document.getElementById('business-chat-input-area').style.display = 'block';
-        
-        // Save welcome message to chat history
-        if (this.analyticsId) {
-          this.saveChatMessage(this.settings?.business_description || 'How can we help you today?', 'bot');
-        }
-      });
-      
-      // Add input field event listeners
-      const nameInput = document.getElementById('business-chat-name');
-      const emailInput = document.getElementById('business-chat-email');
-      
-      nameInput.addEventListener('input', function() {
-        this.style.borderColor = this.value.trim() ? '#d1d5db' : '#ef4444';
-      });
-      
-      emailInput.addEventListener('input', function() {
-        this.style.borderColor = '#d1d5db';
-      });
-      
       // Chat input event listeners
       const chatInput = document.getElementById('business-chat-input');
       const chatSend = document.getElementById('business-chat-send');
@@ -492,10 +456,8 @@
         this.addMessage(message, 'user');
         chatInput.value = '';
         
-        // Save user message to chat history
-        if (this.analyticsId) {
-          this.saveChatMessage(message, 'user');
-        }
+        // Save message to analytics
+        this.saveMessageToAnalytics(message, 'user');
         
         // Hide any advanced replies
         this.hideAdvancedReplies();
@@ -516,10 +478,8 @@
             const botResponse = "I found some information that might help:";
             this.addMessage(botResponse, 'bot');
             
-            // Save bot response to chat history
-            if (this.analyticsId) {
-              this.saveChatMessage(botResponse, 'bot');
-            }
+            // Save bot response to analytics
+            this.saveMessageToAnalytics(botResponse, 'bot');
           } else {
             // Otherwise process as regular auto-reply
             this.processAutoReply(message);
@@ -775,16 +735,6 @@
           opacity: 0;
           transition: 0s;
         }
-        
-        /* User info form styles */
-        #business-chat-name:focus, #business-chat-email:focus {
-          border-color: ${this.settings?.brand_color || '#3B82F6'};
-          box-shadow: 0 0 0 2px ${this.settings?.brand_color || '#3B82F6'}30;
-        }
-        
-        #business-chat-submit-info:hover {
-          background-color: ${this.lightenDarkenColor(this.settings?.brand_color || '#3B82F6', -15)};
-        }
       `;
       document.head.appendChild(style);
     }
@@ -970,10 +920,8 @@
             // Add the response as a bot message
             this.addMessage(reply.response, 'bot');
             
-            // Save bot response to chat history
-            if (this.analyticsId) {
-              this.saveChatMessage(reply.response, 'bot');
-            }
+            // Save bot response to analytics
+            this.saveMessageToAnalytics(reply.response, 'bot');
           });
         }
         
@@ -1030,10 +978,8 @@
       if (matchedReply) {
         this.addMessage(matchedReply.response, 'bot');
         
-        // Save bot response to chat history
-        if (this.analyticsId) {
-          this.saveChatMessage(matchedReply.response, 'bot');
-        }
+        // Save bot response to analytics
+        this.saveMessageToAnalytics(matchedReply.response, 'bot');
       } else {
         // No auto-reply match found, check if AI mode is enabled
         if (this.aiSettings && this.aiSettings.enabled && this.aiSettings.api_key) {
@@ -1050,30 +996,24 @@
             // Add AI response
             this.addMessage(response, 'bot');
             
-            // Save bot response to chat history
-            if (this.analyticsId) {
-              this.saveChatMessage(response, 'bot');
-            }
+            // Save AI response to analytics
+            this.saveMessageToAnalytics(response, 'bot');
           } catch (error) {
             console.error('Error getting AI response:', error);
             this.hideTypingIndicator();
             const defaultResponse = "Thank you for your message. We'll get back to you as soon as possible.";
             this.addMessage(defaultResponse, 'bot');
             
-            // Save default response to chat history
-            if (this.analyticsId) {
-              this.saveChatMessage(defaultResponse, 'bot');
-            }
+            // Save default response to analytics
+            this.saveMessageToAnalytics(defaultResponse, 'bot');
           }
         } else {
           // AI mode not enabled, use default response
           const defaultResponse = "Thank you for your message. We'll get back to you as soon as possible.";
           this.addMessage(defaultResponse, 'bot');
           
-          // Save default response to chat history
-          if (this.analyticsId) {
-            this.saveChatMessage(defaultResponse, 'bot');
-          }
+          // Save default response to analytics
+          this.saveMessageToAnalytics(defaultResponse, 'bot');
         }
       }
     }
@@ -1126,37 +1066,6 @@
       } catch (error) {
         console.error('Error in AI response generation:', error);
         throw error;
-      }
-    }
-    
-    async saveChatMessage(message, sender) {
-      if (!this.analyticsId) {
-        console.log('No analytics ID available, cannot save chat message');
-        return;
-      }
-      
-      try {
-        const response = await fetch('https://usyavvmfddorgmitctym.supabase.co/rest/v1/chat_messages', {
-          method: 'POST',
-          headers: {
-            'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60',
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeWF2dm1mZGRvcmdtaXRjdHltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA2Njc0MTUsImV4cCI6MjA1NjI0MzQxNX0.Oxz6W0XLIYEmxGFBhh3FRX5kjHH6JIZ7ZKH2_ORlb60'
-          },
-          body: JSON.stringify({
-            analytics_id: this.analyticsId,
-            message: message,
-            sender: sender
-          })
-        });
-        
-        if (!response.ok) {
-          throw new Error(`Failed to save chat message: ${response.status} ${response.statusText}`);
-        }
-        
-        console.log('Chat message saved successfully');
-      } catch (error) {
-        console.error('Failed to save chat message:', error);
       }
     }
     
